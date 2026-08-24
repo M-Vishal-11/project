@@ -150,33 +150,33 @@ class MainActivity : FlutterActivity() {
                 android.view.WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
             )
         }
-        // 1. Request location permission (all-time if possible)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            requestPermissions(
-                arrayOf(
-                    android.Manifest.permission.ACCESS_FINE_LOCATION,
-                    android.Manifest.permission.ACCESS_COARSE_LOCATION,
-                    android.Manifest.permission.ACCESS_BACKGROUND_LOCATION
-                ), 1002
-            )
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            requestPermissions(
-                arrayOf(
-                    android.Manifest.permission.ACCESS_FINE_LOCATION,
-                    android.Manifest.permission.ACCESS_COARSE_LOCATION
-                ), 1002
-            )
-        } else {
-            // If below M, proceed to next step
-            requestPhoneAccountPermissionAndSettings()
-        }
+        // 1. Check and request location permission before starting DangerZoneService
+        val hasFine = checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val hasCoarse = checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
-        // Start DangerZoneService automatically
-        val dangerZoneServiceIntent = Intent(this, DangerZoneService::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(dangerZoneServiceIntent)
+        if (hasFine || hasCoarse) {
+            startDangerZoneService()
+            requestPhoneAccountPermissionAndSettings()
         } else {
-            startService(dangerZoneServiceIntent)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                requestPermissions(
+                    arrayOf(
+                        android.Manifest.permission.ACCESS_FINE_LOCATION,
+                        android.Manifest.permission.ACCESS_COARSE_LOCATION,
+                        android.Manifest.permission.ACCESS_BACKGROUND_LOCATION
+                    ), 1002
+                )
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                requestPermissions(
+                    arrayOf(
+                        android.Manifest.permission.ACCESS_FINE_LOCATION,
+                        android.Manifest.permission.ACCESS_COARSE_LOCATION
+                    ), 1002
+                )
+            } else {
+                startDangerZoneService()
+                requestPhoneAccountPermissionAndSettings()
+            }
         }
 
         val shakeIntent = intent
@@ -207,6 +207,26 @@ class MainActivity : FlutterActivity() {
             // Store flag to open SOS screen when Flutter is ready
             val prefs = getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
             prefs.edit().putBoolean("open_sos_screen", true).apply()
+        }
+    }
+
+    private fun startDangerZoneService() {
+        val hasFine = checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val hasCoarse = checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (hasFine || hasCoarse) {
+            try {
+                val dangerZoneServiceIntent = Intent(this, DangerZoneService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(dangerZoneServiceIntent)
+                } else {
+                    startService(dangerZoneServiceIntent)
+                }
+                Log.d("MainActivity", "DangerZoneService started successfully")
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Failed to start DangerZoneService: ${e.message}")
+            }
+        } else {
+            Log.w("MainActivity", "Cannot start DangerZoneService: Location permission not granted yet.")
         }
     }
 
@@ -246,7 +266,8 @@ class MainActivity : FlutterActivity() {
         // Remove notification permission handling
         if (requestCode == 1002) {
             if (grantResults.isNotEmpty() && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                // Location permission granted, now request phone account permission and open settings
+                // Location permission granted, now start DangerZoneService and proceed
+                startDangerZoneService()
                 requestPhoneAccountPermissionAndSettings()
             } else {
                 android.widget.Toast.makeText(this, "Location permission is required for full functionality.", android.widget.Toast.LENGTH_LONG).show()

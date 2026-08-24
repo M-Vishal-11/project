@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../services/local_session.dart';
 import 'shake_calibration_screen.dart';
 
@@ -219,30 +220,33 @@ class _UserDetailsFormScreenState extends State<UserDetailsFormScreen> {
 
   Future<void> _completeRegistration() async {
     if (!_formKey.currentState!.validate()) return;
-    // Gesture recording validation removed - will be handled in separate calibration screen
 
     setState(() { _loading = true; _error = null; });
 
     try {
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? await LocalSession.getCurrentUserId() ?? widget.phoneNumber;
+
       final userData = {
+        'uid': uid,
         'phoneNumber': widget.phoneNumber,
         'name': _nameController.text.trim(),
         'email': _emailController.text.trim().isNotEmpty ? _emailController.text.trim() : null,
         'dateOfBirth': _selectedDate != null ? Timestamp.fromDate(_selectedDate!) : null,
+        'profileComplete': true,
         'gestureRecorded': false, // Will be set to true after calibration
         'maxGestureValue': null, // Will be set after calibration
         'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
       };
       userData.removeWhere((key, value) => value == null);
+
       await FirebaseFirestore.instance
           .collection('users')
-          .doc(widget.phoneNumber)
+          .doc(uid)
           .set(userData, SetOptions(merge: true));
 
-      // Create local session for new user
-      await LocalSession.setCurrentUserId(widget.phoneNumber);
-
-      // Gesture calibration will be handled in separate screen
+      // Cache current user ID in local session
+      await LocalSession.setCurrentUserId(uid);
 
       widget.onComplete?.call();
       Navigator.of(context).pushAndRemoveUntil(

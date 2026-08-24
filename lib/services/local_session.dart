@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class LocalSession {
@@ -9,11 +10,18 @@ class LocalSession {
   }
 
   static Future<String?> getCurrentUserId() async {
+    final firebaseUid = FirebaseAuth.instance.currentUser?.uid;
+    if (firebaseUid != null && firebaseUid.isNotEmpty) {
+      return firebaseUid;
+    }
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(_keyCurrentUserId);
   }
 
   static Future<void> clear() async {
+    try {
+      await FirebaseAuth.instance.signOut();
+    } catch (_) {}
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_keyCurrentUserId);
   }

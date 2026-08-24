@@ -4,9 +4,11 @@ import 'package:safestep/home_screen.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:safestep/services/sos_navigation_service.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'services/local_session.dart';
 import 'views/auth/phone_auth_screen.dart';
+import 'views/auth/user_details_form_screen.dart';
 import 'views/splash_screen.dart';
 
 void main() async {
@@ -75,63 +77,44 @@ class _SplashToAuthGateState extends State<SplashToAuthGate> {
   }
 }
 
-class AuthGate extends StatefulWidget {
-  @override
-  State<AuthGate> createState() => _AuthGateState();
-}
-
-class _AuthGateState extends State<AuthGate> {
-  bool _isLoading = true;
-  bool _isAuthenticated = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _checkAuthenticationStatus();
-  }
-
-  Future<void> _checkAuthenticationStatus() async {
-    try {
-      print('🔍 Checking authentication status...');
-      final localUserId = await LocalSession.getCurrentUserId();
-      if (mounted) {
-        if (localUserId != null && localUserId.isNotEmpty) {
-          print('✅ Local session found for $localUserId');
-          _isAuthenticated = true;
-        } else {
-          print('❌ No local session');
-          _isAuthenticated = false;
-        }
-        _isLoading = false;
-        setState(() {});
-      }
-    } catch (e) {
-      print('❌ Error checking authentication status: $e');
-      if (mounted) {
-        setState(() {
-          _isAuthenticated = false;
-          _isLoading = false;
-        });
-      }
-    }
-  }
+class AuthGate extends StatelessWidget {
+  const AuthGate({super.key});
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(body: Center(child: CircularProgressIndicator()));
+        }
 
-    if (_isAuthenticated) {
-      return const HomeScreen();
-    } else {
-      return PhoneAuthScreen(
-        onAuthSuccess: () {
-          print('🔄 PhoneAuthScreen onAuthSuccess called');
-          _checkAuthenticationStatus();
-        },
-      );
-    }
+        final user = snapshot.data;
+        if (user == null) {
+          return const PhoneAuthScreen();
+        }
+
+        // User is authenticated in Firebase; check Firestore profile status
+        return FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          future: FirebaseFirestore.instance.collection('users').doc(user.uid).get(),
+          builder: (context, docSnapshot) {
+            if (docSnapshot.connectionState == ConnectionState.waiting) {
+              return const Scaffold(body: Center(child: CircularProgressIndicator()));
+            }
+
+            final data = docSnapshot.data?.data();
+            final profileComplete = data?['profileComplete'] == true;
+
+            if (profileComplete) {
+              return const HomeScreen();
+            } else {
+              final phone = data?['phoneNumber'] ?? user.phoneNumber ?? '';
+              return UserDetailsFormScreen(phoneNumber: phone);
+            }
+          },
+        );
+      },
+    );
   }
 }
 

@@ -41,9 +41,24 @@ class DangerZoneService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED &&
+            ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            android.util.Log.w("DangerZoneService", "Cannot start location foreground service: Location permission not granted.")
+            stopSelf()
+            return
+        }
+
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         handler = Handler(Looper.getMainLooper())
-        startForeground(ALERT_NOTIFICATION_ID, buildNotification("Monitoring for danger zones..."))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                ALERT_NOTIFICATION_ID,
+                buildNotification("Monitoring for danger zones..."),
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            )
+        } else {
+            startForeground(ALERT_NOTIFICATION_ID, buildNotification("Monitoring for danger zones..."))
+        }
         startDangerZonesRealtimeListener()
         startRepeatingCheck()
         registerStopAlertReceiver()
@@ -113,14 +128,22 @@ class DangerZoneService : Service() {
             .addAction(Notification.Action.Builder(android.R.drawable.ic_menu_close_clear_cancel, "Stop Alerting", stopPendingIntent).build())
             .build()
         notificationManager.notify(ALERT_NOTIFICATION_ID, notification)
-        startForeground(ALERT_NOTIFICATION_ID, notification)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(ALERT_NOTIFICATION_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+        } else {
+            startForeground(ALERT_NOTIFICATION_ID, notification)
+        }
     }
 
     private fun updateMonitoringNotification() {
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val notification = buildNotification("Monitoring for danger zones...")
         notificationManager.notify(ALERT_NOTIFICATION_ID, notification)
-        startForeground(ALERT_NOTIFICATION_ID, notification)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(ALERT_NOTIFICATION_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+        } else {
+            startForeground(ALERT_NOTIFICATION_ID, notification)
+        }
     }
 
     private fun updateNotificationState(inZone: Boolean) {
@@ -188,7 +211,12 @@ class DangerZoneService : Service() {
             val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             notificationManager.cancel(ALERT_NOTIFICATION_ID)
             // Restart foreground notification for monitoring
-            startForeground(ALERT_NOTIFICATION_ID, buildNotification("Monitoring for danger zones..."))
+            val notification = buildNotification("Monitoring for danger zones...")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(ALERT_NOTIFICATION_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+            } else {
+                startForeground(ALERT_NOTIFICATION_ID, notification)
+            }
         }
     }
 
@@ -215,7 +243,11 @@ class DangerZoneService : Service() {
                 handler?.removeCallbacksAndMessages(null)
             }
         }
-        registerReceiver(stopAlertReceiver, IntentFilter("com.example.safestep.STOP_ALERT"))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(stopAlertReceiver, IntentFilter("com.example.safestep.STOP_ALERT"), Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(stopAlertReceiver, IntentFilter("com.example.safestep.STOP_ALERT"))
+        }
     }
 
     private fun unregisterStopAlertReceiver() {

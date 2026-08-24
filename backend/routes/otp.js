@@ -496,11 +496,32 @@ router.post('/verify', async (req, res) => {
 
     console.log('✅ OTP verified successfully for:', otpData.phoneNumber);
 
-    // Return success response
+    const cleanPhoneNumber = otpData.phoneNumber.replace('tel:', '').replace(/[^0-9]/g, '');
+    const uid = `phone_${cleanPhoneNumber}`;
+
+    // Create Firebase Custom Token for the authenticated user
+    let customToken = null;
+    try {
+      customToken = await admin.auth().createCustomToken(uid, {
+        phoneNumber: `+${cleanPhoneNumber}`
+      });
+      console.log('🔑 Firebase Custom Token generated successfully for UID:', uid);
+    } catch (authError) {
+      console.error('❌ Failed to generate Firebase Custom Token:', authError.message);
+      return res.status(500).json({
+        error: 'Failed to generate authentication token',
+        code: 'TOKEN_GENERATION_FAILED',
+        message: authError.message
+      });
+    }
+
+    // Return success response with customToken and uid
     res.json({
       success: true,
       message: 'OTP verified successfully',
-      phoneNumber: otpData.phoneNumber.replace('tel:', ''),
+      phoneNumber: cleanPhoneNumber,
+      customToken: customToken,
+      uid: uid,
       verifiedAt: new Date().toISOString(),
       subscriptionStatus: 'VERIFIED'
     });
@@ -512,6 +533,45 @@ router.post('/verify', async (req, res) => {
       error: 'Internal server error',
       code: 'INTERNAL_ERROR',
       message: 'Failed to verify OTP'
+    });
+  }
+});
+
+// POST /api/otp/dev-token - Issue development custom token for kDebugMode only
+router.post('/dev-token', async (req, res) => {
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(403).json({
+      error: 'Development authentication is disabled in production',
+      code: 'DEV_AUTH_DISABLED'
+    });
+  }
+
+  try {
+    const { phoneNumber } = req.body;
+    const rawPhone = phoneNumber || '+94770000000';
+    const cleanPhoneNumber = rawPhone.replace(/[^0-9]/g, '') || '94770000000';
+    const uid = `phone_${cleanPhoneNumber}`;
+
+    const customToken = await admin.auth().createCustomToken(uid, {
+      phoneNumber: `+${cleanPhoneNumber}`,
+      isDevUser: true
+    });
+
+    console.log('🔑 [DEV AUTH] Issued development custom token for UID:', uid);
+
+    res.json({
+      success: true,
+      phoneNumber: cleanPhoneNumber,
+      customToken: customToken,
+      uid: uid,
+      isDevToken: true
+    });
+  } catch (error) {
+    console.error('❌ [DEV AUTH] Error generating dev token:', error.message);
+    res.status(500).json({
+      error: 'Failed to generate development token',
+      code: 'DEV_TOKEN_ERROR',
+      message: error.message
     });
   }
 });

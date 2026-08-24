@@ -1,28 +1,43 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class OTPService {
-  static const String _baseUrl = 'http://budd.systems:9442'; // Change this to your actual backend URLtems
+  static String get _baseUrl => dotenv.env['BACKEND_URL'] ?? 'http://budd.systems:9442';
   static const Duration _timeout = Duration(seconds: 10);
+  static const Duration _devTokenTimeout = Duration(seconds: 5);
 
-  // Format phone number for Sri Lankan numbers
+  // Format phone number for backend API
+  // The backend expects a phone number string, strips non-digits, and prepends +
   static String _formatPhoneNumber(String phone) {
     // Remove all non-digit characters
     String digits = phone.replaceAll(RegExp(r'[^\d]'), '');
     
     // Handle Sri Lankan mobile numbers
     if (digits.length == 9 && digits.startsWith('7')) {
-      return 'tel:94$digits';
+      return '+94$digits';
     } else if (digits.length == 12 && digits.startsWith('947')) {
-      return 'tel:$digits';
-    } else if (digits.length == 10 && digits.startsWith('0')) {
-      // Handle numbers starting with 0
-      return 'tel:94${digits.substring(1)}';
+      return '+$digits';
+    } else if (digits.length == 10 && digits.startsWith('0') && digits[1] == '7') {
+      // Sri Lankan numbers starting with 0
+      return '+94${digits.substring(1)}';
     }
     
-    // Return as-is if already formatted
-    return phone.startsWith('tel:') ? phone : 'tel:$digits';
+    // Handle Indian mobile numbers
+    if (digits.length == 10 && (digits.startsWith('6') || digits.startsWith('7') || digits.startsWith('8') || digits.startsWith('9'))) {
+      return '+91$digits';
+    } else if (digits.length == 12 && digits.startsWith('91')) {
+      return '+$digits';
+    }
+    
+    // If already has + prefix, return as-is
+    if (phone.startsWith('+')) {
+      return phone;
+    }
+    
+    // Default: return with + if purely digits
+    return digits.isNotEmpty ? '+$digits' : phone;
   }
 
   // Request OTP from custom backend
@@ -138,6 +153,8 @@ class OTPService {
             phoneNumber: responseData['phoneNumber'],
             verifiedAt: responseData['verifiedAt'],
             subscriptionStatus: responseData['subscriptionStatus'],
+            customToken: responseData['customToken'],
+            uid: responseData['uid'],
           );
         } else {
           print('❌ OTP verification failed: ${responseData['message']}');
@@ -168,6 +185,51 @@ class OTPService {
       code: 'UNKNOWN_ERROR',
       message: 'Unexpected error occurred during verification',
     );
+  }
+
+  // Request development custom token (kDebugMode only)
+  static Future<OTPVerificationResponse> requestDevCustomToken(String phoneNumber) async {
+    try {
+      final formattedPhone = _formatPhoneNumber(phoneNumber);
+      print('🛠️ [DEV AUTH] Requesting dev custom token for: $phoneNumber (formatted: $formattedPhone)');
+
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/otp/dev-token'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: jsonEncode({
+          'phoneNumber': formattedPhone,
+        }),
+      ).timeout(_devTokenTimeout);
+
+      print('📡 Dev token response status: ${response.statusCode}');
+      print('📄 Dev token response body: ${response.body}');
+
+      final responseData = jsonDecode(response.body);
+
+      if (response.statusCode == 200) {
+        return OTPVerificationResponse.success(
+          phoneNumber: responseData['phoneNumber'] ?? phoneNumber,
+          verifiedAt: DateTime.now().toIso8601String(),
+          subscriptionStatus: 'DEV_VERIFIED',
+          customToken: responseData['customToken'],
+          uid: responseData['uid'],
+        );
+      } else {
+        return OTPVerificationResponse.error(
+          code: responseData['code'] ?? 'DEV_TOKEN_FAILED',
+          message: responseData['message'] ?? responseData['error'] ?? 'Failed to get development token',
+        );
+      }
+    } catch (e) {
+      print('❌ Dev token error: $e');
+      return OTPVerificationResponse.error(
+        code: 'NETWORK_ERROR',
+        message: 'Dev token request failed: ${e.toString()}',
+      );
+    }
   }
 
   // Check if user exists by phone number
@@ -340,6 +402,8 @@ class OTPVerificationResponse {
   final String? phoneNumber;
   final String? verifiedAt;
   final String? subscriptionStatus;
+  final String? customToken;
+  final String? uid;
   final String? code;
   final String? message;
   final int? attemptsRemaining;
@@ -349,6 +413,8 @@ class OTPVerificationResponse {
     this.phoneNumber,
     this.verifiedAt,
     this.subscriptionStatus,
+    this.customToken,
+    this.uid,
     this.code,
     this.message,
     this.attemptsRemaining,
@@ -358,12 +424,16 @@ class OTPVerificationResponse {
     required String phoneNumber,
     required String verifiedAt,
     required String subscriptionStatus,
+    String? customToken,
+    String? uid,
   }) {
     return OTPVerificationResponse._(
       success: true,
       phoneNumber: phoneNumber,
       verifiedAt: verifiedAt,
       subscriptionStatus: subscriptionStatus,
+      customToken: customToken,
+      uid: uid,
     );
   }
 

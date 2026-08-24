@@ -22,9 +22,9 @@ class LocationDatabase {
     while (_isProcessing) {
       await Future.delayed(Duration(milliseconds: 10));
     }
-    
+
     _isProcessing = true;
-    
+
     try {
       final result = await operation();
       return result;
@@ -37,11 +37,7 @@ class LocationDatabase {
     final documentsDirectory = await getApplicationDocumentsDirectory();
     final path = join(documentsDirectory.path, 'location_data.db');
 
-    return await openDatabase(
-      path,
-      version: 1,
-      onCreate: _onCreate,
-    );
+    return await openDatabase(path, version: 1, onCreate: _onCreate);
   }
 
   static Future<void> _onCreate(Database db, int version) async {
@@ -77,10 +73,18 @@ class LocationDatabase {
     ''');
 
     // Create indexes for better performance
-    await db.execute('CREATE INDEX idx_location_session_id ON $_tableName(session_id)');
-    await db.execute('CREATE INDEX idx_location_timestamp ON $_tableName(timestamp)');
-    await db.execute('CREATE INDEX idx_session_user_id ON $_sessionTableName(user_id)');
-    await db.execute('CREATE INDEX idx_session_active ON $_sessionTableName(is_active)');
+    await db.execute(
+      'CREATE INDEX idx_location_session_id ON $_tableName(session_id)',
+    );
+    await db.execute(
+      'CREATE INDEX idx_location_timestamp ON $_tableName(timestamp)',
+    );
+    await db.execute(
+      'CREATE INDEX idx_session_user_id ON $_sessionTableName(user_id)',
+    );
+    await db.execute(
+      'CREATE INDEX idx_session_active ON $_sessionTableName(is_active)',
+    );
   }
 
   // Save location data with transaction
@@ -96,7 +100,7 @@ class LocationDatabase {
   }) async {
     return await _withMutex(() async {
       final db = await database;
-      
+
       return await db.transaction((txn) async {
         return await txn.insert(_tableName, {
           'session_id': sessionId,
@@ -114,24 +118,30 @@ class LocationDatabase {
   }
 
   // Get location data for a session
-  static Future<List<Map<String, dynamic>>> getLocationData(String sessionId, {int? limit}) async {
+  static Future<List<Map<String, dynamic>>> getLocationData(
+    String sessionId, {
+    int? limit,
+  }) async {
     final db = await database;
-    
-    String query = 'SELECT * FROM $_tableName WHERE session_id = ? ORDER BY timestamp DESC';
+
+    String query =
+        'SELECT * FROM $_tableName WHERE session_id = ? ORDER BY timestamp DESC';
     List<dynamic> args = [sessionId];
-    
+
     if (limit != null) {
       query += ' LIMIT ?';
       args.add(limit);
     }
-    
+
     return await db.rawQuery(query, args);
   }
 
   // Get latest location for a session
-  static Future<Map<String, dynamic>?> getLatestLocation(String sessionId) async {
+  static Future<Map<String, dynamic>?> getLatestLocation(
+    String sessionId,
+  ) async {
     final db = await database;
-    
+
     final result = await db.query(
       _tableName,
       where: 'session_id = ?',
@@ -139,7 +149,7 @@ class LocationDatabase {
       orderBy: 'timestamp DESC',
       limit: 1,
     );
-    
+
     return result.isNotEmpty ? result.first : null;
   }
 
@@ -153,7 +163,7 @@ class LocationDatabase {
   }) async {
     return await _withMutex(() async {
       final db = await database;
-      
+
       return await db.transaction((txn) async {
         return await txn.insert(_sessionTableName, {
           'session_id': sessionId,
@@ -171,13 +181,10 @@ class LocationDatabase {
   // End a location session
   static Future<int> endSession(String sessionId) async {
     final db = await database;
-    
+
     return await db.update(
       _sessionTableName,
-      {
-        'is_active': 0,
-        'ended_at': DateTime.now().millisecondsSinceEpoch,
-      },
+      {'is_active': 0, 'ended_at': DateTime.now().millisecondsSinceEpoch},
       where: 'session_id = ?',
       whereArgs: [sessionId],
     );
@@ -186,7 +193,7 @@ class LocationDatabase {
   // Get active session for a user
   static Future<Map<String, dynamic>?> getActiveSession(String userId) async {
     final db = await database;
-    
+
     final result = await db.query(
       _sessionTableName,
       where: 'user_id = ? AND is_active = 1',
@@ -194,40 +201,49 @@ class LocationDatabase {
       orderBy: 'started_at DESC',
       limit: 1,
     );
-    
+
     return result.isNotEmpty ? result.first : null;
   }
 
   // Get all sessions for a user
-  static Future<List<Map<String, dynamic>>> getUserSessions(String userId, {int? limit}) async {
+  static Future<List<Map<String, dynamic>>> getUserSessions(
+    String userId, {
+    int? limit,
+  }) async {
     final db = await database;
-    
-    String query = 'SELECT * FROM $_sessionTableName WHERE user_id = ? ORDER BY started_at DESC';
+
+    String query =
+        'SELECT * FROM $_sessionTableName WHERE user_id = ? ORDER BY started_at DESC';
     List<dynamic> args = [userId];
-    
+
     if (limit != null) {
       query += ' LIMIT ?';
       args.add(limit);
     }
-    
+
     return await db.rawQuery(query, args);
   }
 
   // Get sessions for a specific user (alias for getUserSessions)
-  static Future<List<Map<String, dynamic>>> getSessionsForUser(String userId) async {
+  static Future<List<Map<String, dynamic>>> getSessionsForUser(
+    String userId,
+  ) async {
     return await getUserSessions(userId);
   }
 
   // Get location data for a specific session
-  static Future<List<Map<String, dynamic>>> getLocationDataForSession(String sessionId) async {
+  static Future<List<Map<String, dynamic>>> getLocationDataForSession(
+    String sessionId,
+  ) async {
     return await getLocationData(sessionId);
   }
 
   // Delete old location data (cleanup)
   static Future<int> deleteOldLocationData({int daysOld = 30}) async {
     final db = await database;
-    final cutoffTime = DateTime.now().subtract(Duration(days: daysOld)).millisecondsSinceEpoch;
-    
+    final cutoffTime =
+        DateTime.now().subtract(Duration(days: daysOld)).millisecondsSinceEpoch;
+
     return await db.delete(
       _tableName,
       where: 'created_at < ?',
@@ -238,8 +254,9 @@ class LocationDatabase {
   // Delete old sessions (cleanup)
   static Future<int> deleteOldSessions({int daysOld = 30}) async {
     final db = await database;
-    final cutoffTime = DateTime.now().subtract(Duration(days: daysOld)).millisecondsSinceEpoch;
-    
+    final cutoffTime =
+        DateTime.now().subtract(Duration(days: daysOld)).millisecondsSinceEpoch;
+
     return await db.delete(
       _sessionTableName,
       where: 'started_at < ?',
@@ -250,19 +267,27 @@ class LocationDatabase {
   // Get database statistics
   static Future<Map<String, int>> getStats() async {
     final db = await database;
-    
-    final locationCount = Sqflite.firstIntValue(
-      await db.rawQuery('SELECT COUNT(*) FROM $_tableName')
-    ) ?? 0;
-    
-    final sessionCount = Sqflite.firstIntValue(
-      await db.rawQuery('SELECT COUNT(*) FROM $_sessionTableName')
-    ) ?? 0;
-    
-    final activeSessionCount = Sqflite.firstIntValue(
-      await db.rawQuery('SELECT COUNT(*) FROM $_sessionTableName WHERE is_active = 1')
-    ) ?? 0;
-    
+
+    final locationCount =
+        Sqflite.firstIntValue(
+          await db.rawQuery('SELECT COUNT(*) FROM $_tableName'),
+        ) ??
+        0;
+
+    final sessionCount =
+        Sqflite.firstIntValue(
+          await db.rawQuery('SELECT COUNT(*) FROM $_sessionTableName'),
+        ) ??
+        0;
+
+    final activeSessionCount =
+        Sqflite.firstIntValue(
+          await db.rawQuery(
+            'SELECT COUNT(*) FROM $_sessionTableName WHERE is_active = 1',
+          ),
+        ) ??
+        0;
+
     return {
       'location_records': locationCount,
       'total_sessions': sessionCount,
@@ -279,4 +304,3 @@ class LocationDatabase {
     }
   }
 }
-

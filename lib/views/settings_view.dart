@@ -48,6 +48,11 @@ class SettingsView extends StatelessWidget {
           ),
           const SizedBox(height: 24),
           _SettingsTile(
+            icon: Icons.logout,
+            label: 'Logout',
+          ),
+          const SizedBox(height: 12),
+          _SettingsTile(
             icon: Icons.delete_forever,
             label: 'Delete Account',
             isDestructive: true,
@@ -124,11 +129,54 @@ class _SettingsTile extends StatelessWidget {
             Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const HelpSupportView()),
             );
+          } else if (label == 'Logout') {
+            _showLogoutDialog(context);
           } else if (label == 'Delete Account') {
             _showDeleteAccountDialog(context);
           }
         },
       ),
+    );
+  }
+
+  void _showLogoutDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text(
+            'Logout',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+          content: const Text(
+            'Are you sure you want to logout?',
+            style: TextStyle(fontSize: 16),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel', style: TextStyle(color: Color(0xFF8F5FE8))),
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                try {
+                  const platform = MethodChannel('com.example.safestep/shake_gesture');
+                  await platform.invokeMethod('stopShakeDetection');
+                } catch (_) {}
+                await LocalSession.clear();
+                if (context.mounted) {
+                  Navigator.of(context).pushAndRemoveUntil(
+                    MaterialPageRoute(builder: (_) => const PhoneAuthScreen()),
+                    (route) => false,
+                  );
+                }
+              },
+              child: const Text('Logout', style: TextStyle(color: Colors.red)),
+            ),
+          ],
+        );
+      },
     );
   }
 

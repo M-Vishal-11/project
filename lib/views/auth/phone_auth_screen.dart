@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:safestep/home_screen.dart';
 import 'package:safestep/views/auth/user_details_form_screen.dart';
 import '../../services/otp_service.dart';
@@ -29,16 +30,24 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
     // Remove all non-digit characters
     String digits = phone.replaceAll(RegExp(r'[^\d]'), '');
     
+    // Handle Indian mobile numbers (10 digits starting with 6, 7, 8, or 9)
+    if (digits.length == 10 && (digits.startsWith('6') || digits.startsWith('7') || digits.startsWith('8') || digits.startsWith('9'))) {
+      return '+91$digits';
+    } else if (digits.length == 12 && digits.startsWith('91')) {
+      return '+$digits';
+    }
+    
     // Handle Sri Lankan mobile numbers
     if (digits.length == 9 && digits.startsWith('7')) {
       return '+94$digits';
     } else if (digits.length == 12 && digits.startsWith('947')) {
       return '+$digits';
-    } else if (digits.length == 10 && digits.startsWith('0')) {
-      // Handle numbers starting with 0
+    } else if (digits.length == 10 && digits.startsWith('0') && digits[1] == '7') {
       return '+94${digits.substring(1)}';
     }
-    return phone; // Return as-is if already formatted
+    
+    if (phone.startsWith('+')) return phone;
+    return digits.isNotEmpty ? '+$digits' : phone;
   }
 
   Future<void> _sendOTP() async {
@@ -200,49 +209,62 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
   //   }
   // }
   Future<void> _verifyOTP() async {
-  if (_otpReference == null) return;
+    if (_otpReference == null) return;
 
-  setState(() {
-    _loading = true;
-    _error = null;
-  });
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
 
-  try {
-    final verifyResponse = await OTPService.verifyOTP(
-      reference: _otpReference!,
-      otp: _otpController.text.trim(),
-    );
+    try {
+      final verifyResponse = await OTPService.verifyOTP(
+        reference: _otpReference!,
+        otp: _otpController.text.trim(),
+      );
 
-    if (verifyResponse.success) {
-      final phoneNumber = verifyResponse.phoneNumber!;
-      print('🔍 [AUTH] OTP verified successfully for phone: $phoneNumber');
+      if (verifyResponse.success) {
+        final phoneNumber = verifyResponse.phoneNumber!;
+        print('🔍 [AUTH] OTP verified successfully for phone: $phoneNumber');
 
-      print('🔍 [AUTH] Checking if user exists for phone: $phoneNumber');
-      final userExistsResponse = await OTPService.checkUserExists(phoneNumber);
-      print('🔍 [AUTH] User exists check result: success=${userExistsResponse.success}, userData=${userExistsResponse.userData}');
+        // Sign in with Firebase Custom Token
+        if (verifyResponse.customToken != null) {
+          print('🔑 [AUTH] Signing in to Firebase with Custom Token...');
+          await FirebaseAuth.instance.signInWithCustomToken(verifyResponse.customToken!);
+        } else {
+          print('⚠️ [AUTH] Warning: No custom token returned in OTP response');
+        }
 
-      if (userExistsResponse.success) {
-        // User exists - check if profile is complete
-        final userData = userExistsResponse.userData;
-        final profileComplete = userData?['profileComplete'] ?? false;
-        
-        print('✅ [AUTH] User exists, profileComplete: $profileComplete');
-        
+        final currentUser = FirebaseAuth.instance.currentUser;
+        if (currentUser == null) {
+          throw Exception('Firebase authentication failed. Current user is null.');
+        }
+
+        final uid = currentUser.uid;
+        print('✅ [AUTH] Firebase Auth successful! UID: $uid');
+        await LocalSession.setCurrentUserId(uid);
+
+        // Check if user profile exists and is complete in Firestore
+        print('🔍 [AUTH] Checking Firestore profile for UID: $uid');
+        final userDoc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+        final userData = userDoc.data();
+        final profileComplete = userData?['profileComplete'] == true;
+
+        print('✅ [AUTH] User doc exists: ${userDoc.exists}, profileComplete: $profileComplete');
+
         if (profileComplete) {
-          // Profile is complete - create session and navigate to home
-          print('✅ [AUTH] Profile is complete, creating session and navigating to home');
+          print('✅ [AUTH] Profile complete, starting services and navigating to home');
           await _createCustomUserSession(phoneNumber, userData);
           if (mounted) {
+            widget.onAuthSuccess?.call();
             Navigator.pushReplacement(
               context,
               MaterialPageRoute(
-                builder: (context) => HomeScreen(),
+                builder: (context) => const HomeScreen(),
               ),
             );
           }
         } else {
-          // Profile is incomplete - navigate to profile completion
-          print('👤 [AUTH] Profile is incomplete, navigating to profile completion');
+          print('👤 [AUTH] Profile incomplete, navigating to UserDetailsFormScreen');
           if (mounted) {
             Navigator.pushReplacement(
               context,
@@ -260,36 +282,17 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
           }
         }
       } else {
-        // User doesn't exist - navigate to details form
-        print('👤 [AUTH] User does not exist, navigating to user details form');
         if (mounted) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (context) => UserDetailsFormScreen(
-                phoneNumber: phoneNumber,
-                onComplete: () {
-                  if (mounted) {
-                    widget.onAuthSuccess?.call();
-                  }
-                },
-              ),
-            ),
-          );
+          setState(() {
+            _error = verifyResponse.message ?? 'Invalid verification code';
+            _loading = false;
+          });
         }
       }
-    } else {
-      if (mounted) {
-        setState(() {
-          _error = verifyResponse.message;
-          _loading = false;
-        });
-      }
-    }
     } catch (e) {
       if (mounted) {
         setState(() {
-          _error = 'Failed to verify OTP: ${e.toString()}';
+          _error = 'Authentication failed: ${e.toString()}';
           _loading = false;
         });
       }
@@ -297,6 +300,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
   }
 
   /// Development-only bypass: Allows testing without sending or verifying SMS.
+  /// Requires the backend to be running locally to issue a Firebase Custom Token.
   /// Automatically disabled and returns immediately in release mode.
   Future<void> _devBypassVerification() async {
     if (!kDebugMode) return;
@@ -314,36 +318,34 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
 
       print('🛠️ [DEV BYPASS] Continuing without SMS verification for: $phoneNumber');
 
-      Map<String, dynamic>? userData;
-      bool profileComplete = false;
+      // Request development custom token from backend (must be running)
+      final devResponse = await OTPService.requestDevCustomToken(phoneNumber);
 
-      // 1. Check user existence via backend API if reachable
-      try {
-        final userExistsResponse = await OTPService.checkUserExists(phoneNumber);
-        if (userExistsResponse.success && userExistsResponse.userData != null) {
-          userData = userExistsResponse.userData;
-          profileComplete = userData?['profileComplete'] ?? false;
-        }
-      } catch (e) {
-        print('🛠️ [DEV BYPASS] Backend check skipped: $e');
+      if (!devResponse.success || devResponse.customToken == null) {
+        final msg = devResponse.message ?? 'Failed to retrieve development token';
+        throw Exception(msg);
       }
 
-      // 2. Fallback check directly in Firestore if backend didn't confirm profile
-      if (!profileComplete) {
-        try {
-          final cleanPhoneNumber = phoneNumber.replaceAll(RegExp(r'[^\d]'), '');
-          final doc = await FirebaseFirestore.instance.collection('users').doc(cleanPhoneNumber).get();
-          if (doc.exists && doc.data() != null) {
-            userData = doc.data();
-            profileComplete = userData?['profileComplete'] ?? false;
-          }
-        } catch (e) {
-          print('🛠️ [DEV BYPASS] Firestore check skipped: $e');
-        }
+      // Sign in to Firebase with the real custom token from the backend
+      print('🔑 [DEV BYPASS] Signing in to Firebase with dev Custom Token...');
+      await FirebaseAuth.instance.signInWithCustomToken(devResponse.customToken!);
+
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser == null) {
+        throw Exception('Firebase signInWithCustomToken succeeded but currentUser is null');
       }
+
+      final uid = currentUser.uid;
+      print('✅ [DEV BYPASS] Firebase Auth successful! UID: $uid');
+      await LocalSession.setCurrentUserId(uid);
+
+      // Check Firestore profile status
+      final userDoc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+      final userData = userDoc.data();
+      final profileComplete = userData?['profileComplete'] == true;
 
       if (profileComplete) {
-        print('✅ [DEV BYPASS] Existing user profile complete. Creating session and navigating to Home.');
+        print('✅ [DEV BYPASS] Existing user profile complete. Navigating to Home.');
         await _createCustomUserSession(phoneNumber, userData);
         if (mounted) {
           widget.onAuthSuccess?.call();
@@ -373,9 +375,15 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
         }
       }
     } catch (e) {
+      print('❌ [DEV BYPASS] Error: $e');
       if (mounted) {
         setState(() {
-          _error = 'Development bypass failed: ${e.toString()}';
+          _error = 'Development authentication server is unavailable.\n\n'
+              'Make sure the backend is running locally:\n'
+              '  cd backend && npm start\n\n'
+              'And set BACKEND_URL in .env:\n'
+              '  BACKEND_URL=http://<YOUR-PC-IP>:3000\n\n'
+              'Error: ${e.toString()}';
           _loading = false;
         });
       }
@@ -434,38 +442,29 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
 
   Future<void> _createCustomUserSession(String phoneNumber, Map<String, dynamic>? userData) async {
     try {
-      print('💾 [AUTH] Creating custom user session for: $phoneNumber');
-      print('💾 [AUTH] User data received: $userData');
+      final uid = FirebaseAuth.instance.currentUser?.uid ?? await LocalSession.getCurrentUserId() ?? 'phone_${phoneNumber.replaceAll(RegExp(r'[^\d]'), '')}';
+      print('💾 [AUTH] Creating/updating user session for UID: $uid (phone: $phoneNumber)');
       
-      // Create user document in Firestore without Firebase Auth
       final sessionData = {
+        'uid': uid,
         'phoneNumber': phoneNumber,
         'name': userData?['name'] ?? 'User',
         'email': userData?['email'],
         'dateOfBirth': userData?['dateOfBirth'],
-        'createdAt': userData?['createdAt'],
+        'createdAt': userData?['createdAt'] ?? FieldValue.serverTimestamp(),
         'lastLoginAt': FieldValue.serverTimestamp(),
         'isVerified': true,
         'isAuthenticated': true,
-        'sessionId': DateTime.now().millisecondsSinceEpoch.toString(),
         'profileComplete': userData?['profileComplete'] ?? false,
       };
       
-      // Remove null values
       sessionData.removeWhere((key, value) => value == null);
       
-      print('📝 [AUTH] Session data to save: $sessionData');
-      
-      // Store in Firestore with a custom document ID
-      final cleanPhoneNumber = phoneNumber.replaceAll(RegExp(r'[^\d]'), '');
-      print('📝 [AUTH] Using clean phone number as document ID: $cleanPhoneNumber');
-      
-      final userDoc = FirebaseFirestore.instance.collection('users').doc(cleanPhoneNumber);
+      final userDoc = FirebaseFirestore.instance.collection('users').doc(uid);
       await userDoc.set(sessionData, SetOptions(merge: true));
       
-      print('✅ [AUTH] User session created successfully in Firestore with ID: ${userDoc.id}');
-      await LocalSession.setCurrentUserId(userDoc.id);
-      print('✅ [AUTH] Local session set with user ID: ${userDoc.id}');
+      await LocalSession.setCurrentUserId(uid);
+      print('✅ [AUTH] User session updated in Firestore with UID: $uid');
       
       // Start shake detection service for existing users (after calibration)
       if (userData?['profileComplete'] == true) {
@@ -700,61 +699,42 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
                             ),
                           ],
 
-                          // Development Bypass Button (Debug / Development only)
+                          // Skip Verification button (debug builds only)
                           if (kDebugMode) ...[
                             const SizedBox(height: 20),
-                            Container(
+                            SizedBox(
                               width: double.infinity,
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: Colors.amber.shade50,
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: Colors.amber.shade400, width: 1.5),
-                              ),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(Icons.bug_report_outlined, size: 16, color: Colors.amber.shade900),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        'DEVELOPMENT / TESTING ONLY',
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.bold,
-                                          letterSpacing: 0.5,
-                                          color: Colors.amber.shade900,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 8),
-                                  SizedBox(
-                                    width: double.infinity,
-                                    child: OutlinedButton.icon(
-                                      onPressed: _loading ? null : _devBypassVerification,
-                                      icon: const Icon(Icons.skip_next_rounded, color: Color(0xFF7B3FA0), size: 18),
-                                      label: const Text(
-                                        'Continue without SMS verification',
-                                        style: TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.bold,
-                                          color: Color(0xFF7B3FA0),
-                                        ),
-                                      ),
-                                      style: OutlinedButton.styleFrom(
-                                        backgroundColor: Colors.white,
-                                        side: const BorderSide(color: Color(0xFF7B3FA0)),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(8),
-                                        ),
-                                        padding: const EdgeInsets.symmetric(vertical: 12),
+                              child: OutlinedButton(
+                                onPressed: _loading ? null : () {
+                                  Navigator.pushReplacement(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => UserDetailsFormScreen(
+                                        phoneNumber: '',
+                                        onComplete: () {
+                                          if (mounted) {
+                                            widget.onAuthSuccess?.call();
+                                          }
+                                        },
                                       ),
                                     ),
+                                  );
+                                },
+                                style: OutlinedButton.styleFrom(
+                                  side: const BorderSide(color: Color(0xFF7B3FA0)),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
                                   ),
-                                ],
+                                  padding: const EdgeInsets.symmetric(vertical: 14),
+                                ),
+                                child: const Text(
+                                  'Skip Verification',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF7B3FA0),
+                                  ),
+                                ),
                               ),
                             ),
                           ],

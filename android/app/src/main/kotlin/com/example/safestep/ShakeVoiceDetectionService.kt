@@ -95,13 +95,25 @@ class ShakeDetectionService : Service(), SensorEventListener {
         }
         accelLast = SensorManager.GRAVITY_EARTH
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildNotification("Shake detection active"))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                buildNotification("Shake detection active"),
+                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, buildNotification("Shake detection active"))
+        }
         Log.d("ShakeDetectionService", "Service started in foreground")
         val filter = android.content.IntentFilter().apply {
             addAction("com.example.safestep.FAKE_CALL_ACCEPTED")
             addAction("com.example.safestep.FAKE_CALL_REJECTED")
         }
-        registerReceiver(fakeCallActionReceiver, filter)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(fakeCallActionReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(fakeCallActionReceiver, filter)
+        }
     }
 
     override fun onDestroy() {
