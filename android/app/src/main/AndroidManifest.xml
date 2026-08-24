@@ -82,7 +82,7 @@
         <!-- Removed VolumeButtonAccessibilityService registration as part of undoing volume button detection. -->
         <!-- Removed all hardware button detection services and receivers (VolumeButtonService, PowerButtonReceiver, AccessibilityService) as part of cleanup. -->
         <!-- TODO: Replace with your actual Google Maps API Key -->
-        <meta-data android:name="com.google.android.geo.API_KEY" android:value="YOUR_GOOGLE_MAPS_API_KEY_HERE" />
+        <meta-data android:name="com.google.android.geo.API_KEY" android:value="AIzaSyC_oLFResr6Bizyx2lSur4E7D43I-A_htQ" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

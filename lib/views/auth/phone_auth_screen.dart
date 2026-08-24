@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:safestep/home_screen.dart';
 import 'package:safestep/views/auth/user_details_form_screen.dart';
@@ -285,15 +286,101 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
         });
       }
     }
-  } catch (e) {
-    if (mounted) {
-      setState(() {
-        _error = 'Failed to verify OTP: ${e.toString()}';
-        _loading = false;
-      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = 'Failed to verify OTP: ${e.toString()}';
+          _loading = false;
+        });
+      }
     }
   }
-}
+
+  /// Development-only bypass: Allows testing without sending or verifying SMS.
+  /// Automatically disabled and returns immediately in release mode.
+  Future<void> _devBypassVerification() async {
+    if (!kDebugMode) return;
+
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      final inputPhone = _phoneController.text.trim();
+      final phoneNumber = inputPhone.isNotEmpty
+          ? _formatPhoneNumber(inputPhone)
+          : '+94770000000';
+
+      print('🛠️ [DEV BYPASS] Continuing without SMS verification for: $phoneNumber');
+
+      Map<String, dynamic>? userData;
+      bool profileComplete = false;
+
+      // 1. Check user existence via backend API if reachable
+      try {
+        final userExistsResponse = await OTPService.checkUserExists(phoneNumber);
+        if (userExistsResponse.success && userExistsResponse.userData != null) {
+          userData = userExistsResponse.userData;
+          profileComplete = userData?['profileComplete'] ?? false;
+        }
+      } catch (e) {
+        print('🛠️ [DEV BYPASS] Backend check skipped: $e');
+      }
+
+      // 2. Fallback check directly in Firestore if backend didn't confirm profile
+      if (!profileComplete) {
+        try {
+          final cleanPhoneNumber = phoneNumber.replaceAll(RegExp(r'[^\d]'), '');
+          final doc = await FirebaseFirestore.instance.collection('users').doc(cleanPhoneNumber).get();
+          if (doc.exists && doc.data() != null) {
+            userData = doc.data();
+            profileComplete = userData?['profileComplete'] ?? false;
+          }
+        } catch (e) {
+          print('🛠️ [DEV BYPASS] Firestore check skipped: $e');
+        }
+      }
+
+      if (profileComplete) {
+        print('✅ [DEV BYPASS] Existing user profile complete. Creating session and navigating to Home.');
+        await _createCustomUserSession(phoneNumber, userData);
+        if (mounted) {
+          widget.onAuthSuccess?.call();
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const HomeScreen(),
+            ),
+          );
+        }
+      } else {
+        print('👤 [DEV BYPASS] Navigating to UserDetailsFormScreen for: $phoneNumber');
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (context) => UserDetailsFormScreen(
+                phoneNumber: phoneNumber,
+                onComplete: () {
+                  if (mounted) {
+                    widget.onAuthSuccess?.call();
+                  }
+                },
+              ),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = 'Development bypass failed: ${e.toString()}';
+          _loading = false;
+        });
+      }
+    }
+  }
 
   /*Future<void> _verifyOTP() async {
   if (_otpReference == null) return;
@@ -610,6 +697,65 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
                                   ),
                                 ),
                               ],
+                            ),
+                          ],
+
+                          // Development Bypass Button (Debug / Development only)
+                          if (kDebugMode) ...[
+                            const SizedBox(height: 20),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.amber.shade50,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: Colors.amber.shade400, width: 1.5),
+                              ),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(Icons.bug_report_outlined, size: 16, color: Colors.amber.shade900),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        'DEVELOPMENT / TESTING ONLY',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.bold,
+                                          letterSpacing: 0.5,
+                                          color: Colors.amber.shade900,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  SizedBox(
+                                    width: double.infinity,
+                                    child: OutlinedButton.icon(
+                                      onPressed: _loading ? null : _devBypassVerification,
+                                      icon: const Icon(Icons.skip_next_rounded, color: Color(0xFF7B3FA0), size: 18),
+                                      label: const Text(
+                                        'Continue without SMS verification',
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.bold,
+                                          color: Color(0xFF7B3FA0),
+                                        ),
+                                      ),
+                                      style: OutlinedButton.styleFrom(
+                                        backgroundColor: Colors.white,
+                                        side: const BorderSide(color: Color(0xFF7B3FA0)),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        padding: const EdgeInsets.symmetric(vertical: 12),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ],
                         ],
