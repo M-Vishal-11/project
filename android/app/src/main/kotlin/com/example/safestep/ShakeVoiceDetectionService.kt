@@ -20,18 +20,23 @@ class ShakeDetectionService : Service(), SensorEventListener {
     private var userMaxGestureValue: Float = Float.POSITIVE_INFINITY
     private lateinit var sensorManager: SensorManager
     private var accelLast = 0f
-    private var shakeTimestamp: Long = 0
-    private val SHAKE_MAGNITUDE_THRESHOLD = 13f
-    private val SHAKE_DEBOUNCE_MS = 2000L
+
+    // Multi-shake detection parameters
+    private val MIN_SHAKE_THRESHOLD = 14.5f             // Minimum delta acceleration (m/s²) to qualify as a strong shake
+    private val REQUIRED_SHAKE_COUNT = 3               // Requires 3 distinct strong shakes
+    private val SHAKE_WINDOW_MS = 1800L                // All shakes must occur within 1.8 seconds
+    private val MIN_INTERVAL_BETWEEN_SHAKES_MS = 220L  // Minimum 220ms between separate shake peaks (prevents double-counting 1 movement)
+    private val SOS_COOLDOWN_MS = 3000L                // 3.0 second cooldown after SOS trigger to prevent repeat triggers
+
+    private var shakeCount = 0
+    private var firstShakeTime = 0L
+    private var lastShakeTime = 0L
+    private var lastSosTriggerTime = 0L
+
     private val CHANNEL_ID = "shake_detection_service"
     private val NOTIFICATION_ID = 2001
     private var lastNotificationTime = 0L
     private val NOTIFICATION_INTERVAL_MS = 2000L
-    private val DELTA_HISTORY_SIZE = 10
-    private val deltaHistory = FloatArray(DELTA_HISTORY_SIZE)
-    private val deltaTimeHistory = LongArray(DELTA_HISTORY_SIZE)
-    private var deltaHistoryIndex = 0
-    // Allow multiple SOS triggers; rely on debounce timing instead of a sticky guard
 
     companion object {
     // Static method to record shake gesture for 10 seconds and return max value
@@ -135,21 +140,41 @@ class ShakeDetectionService : Service(), SensorEventListener {
             val delta = Math.abs(accelCurrent - accelLast)
             accelLast = accelCurrent
             val now = System.currentTimeMillis()
-            deltaHistory[deltaHistoryIndex] = delta
-            deltaTimeHistory[deltaHistoryIndex] = now
-            deltaHistoryIndex = (deltaHistoryIndex + 1) % DELTA_HISTORY_SIZE
 
-            // Only show notification and send SOS if delta exceeds user's max gesture value
-            if (delta > userMaxGestureValue && now - lastNotificationTime > NOTIFICATION_INTERVAL_MS) {
-                lastNotificationTime = now
-                showEventNotification(
-                    "Maximum Gesture Exceeded",
-                    "delta=%.2f exceeded user max %.2f".format(delta, userMaxGestureValue)
-                )
-                // Only trigger SOS if delta exceeds user's max
-                if (now - shakeTimestamp > SHAKE_DEBOUNCE_MS) {
-                    shakeTimestamp = now
-                    openSosScreen()
+            // In cooldown period after triggering SOS?
+            if (now - lastSosTriggerTime < SOS_COOLDOWN_MS) {
+                return
+            }
+
+            // Determine effective threshold (use calibrated value if sensible, or robust default)
+            val threshold = if (userMaxGestureValue > 0f && userMaxGestureValue != Float.POSITIVE_INFINITY) {
+                Math.max(MIN_SHAKE_THRESHOLD, userMaxGestureValue * 0.75f)
+            } else {
+                MIN_SHAKE_THRESHOLD
+            }
+
+            // Check if this acceleration delta qualifies as a strong shake
+            if (delta > threshold) {
+                // Reset window if too much time passed since first shake
+                if (firstShakeTime == 0L || (now - firstShakeTime > SHAKE_WINDOW_MS)) {
+                    shakeCount = 1
+                    firstShakeTime = now
+                    lastShakeTime = now
+                    Log.d("ShakeDetectionService", "Shake 1/$REQUIRED_SHAKE_COUNT detected (delta=%.2f, threshold=%.2f)".format(delta, threshold))
+                } else if (now - lastShakeTime >= MIN_INTERVAL_BETWEEN_SHAKES_MS) {
+                    // Valid separate shake peak within the active window
+                    shakeCount++
+                    lastShakeTime = now
+                    Log.d("ShakeDetectionService", "Shake $shakeCount/$REQUIRED_SHAKE_COUNT detected (delta=%.2f)".format(delta))
+
+                    if (shakeCount >= REQUIRED_SHAKE_COUNT) {
+                        Log.d("ShakeDetectionService", "Genuine shake gesture confirmed ($shakeCount shakes). Triggering SOS.")
+                        lastSosTriggerTime = now
+                        shakeCount = 0
+                        firstShakeTime = 0L
+                        lastShakeTime = 0L
+                        openSosScreen()
+                    }
                 }
             }
         }

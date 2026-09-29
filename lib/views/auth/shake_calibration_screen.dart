@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../services/local_session.dart';
 import '../onboarding_screens.dart';
 import '../../services/sos_blocker.dart';
@@ -365,11 +366,13 @@ class _ShakeCalibrationScreenState extends State<ShakeCalibrationScreen> {
       }
 
       // Update user document with calibration data
-      await FirebaseFirestore.instance.collection('users').doc(userId).update({
-        'gestureRecorded': true,
-        'maxGestureValue': _maxGestureValue,
-        'profileComplete': true,
-      });
+      if (FirebaseAuth.instance.currentUser != null) {
+        await FirebaseFirestore.instance.collection('users').doc(userId).update({
+          'gestureRecorded': true,
+          'maxGestureValue': _maxGestureValue,
+          'profileComplete': true,
+        });
+      }
 
       // Save max gesture value to Android SharedPreferences for service use
       if (_maxGestureValue != null) {

@@ -7,11 +7,13 @@ import 'shake_calibration_screen.dart';
 
 class UserDetailsFormScreen extends StatefulWidget {
   final String phoneNumber;
+  final bool isVerified;
   final VoidCallback? onComplete;
 
   const UserDetailsFormScreen({
     super.key,
     required this.phoneNumber,
+    this.isVerified = true,
     this.onComplete,
   });
 
@@ -86,19 +88,23 @@ class _UserDetailsFormScreenState extends State<UserDetailsFormScreen> {
                       Icon(Icons.phone, color: Colors.grey.shade600),
                       const SizedBox(width: 12),
                       Text(
-                        'Phone: ${widget.phoneNumber}',
+                        'Phone: ${_formatDisplayPhone(widget.phoneNumber)}',
                         style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
                       ),
                       const Spacer(),
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
-                          color: Colors.green.shade100,
+                          color: widget.isVerified ? Colors.green.shade100 : Colors.amber.shade100,
                           borderRadius: BorderRadius.circular(12),
                         ),
-                        child: const Text(
-                          'Verified',
-                          style: TextStyle(fontSize: 12, color: Colors.green, fontWeight: FontWeight.w500),
+                        child: Text(
+                          widget.isVerified ? 'Verified' : 'Not verified',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: widget.isVerified ? Colors.green.shade800 : Colors.amber.shade900,
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
                       ),
                     ],
@@ -201,6 +207,18 @@ class _UserDetailsFormScreenState extends State<UserDetailsFormScreen> {
     );
   }
 
+  String _formatDisplayPhone(String phone) {
+    final clean = phone.replaceAll(RegExp(r'[^\d]'), '');
+    if (clean.length == 12 && clean.startsWith('91')) {
+      return '+91 ${clean.substring(2, 7)} ${clean.substring(7)}';
+    } else if (clean.length == 10) {
+      return '+91 ${clean.substring(0, 5)} ${clean.substring(5)}';
+    } else if (clean.length == 11 && clean.startsWith('94')) {
+      return '+94 ${clean.substring(2, 4)} ${clean.substring(4)}';
+    }
+    return phone;
+  }
+
   Future<void> _selectDate() async {
     final picked = await showDatePicker(
       context: context,
@@ -216,45 +234,54 @@ class _UserDetailsFormScreenState extends State<UserDetailsFormScreen> {
     }
   }
 
-  // Gesture recording method removed - will be handled in separate calibration screen
-
   Future<void> _completeRegistration() async {
     if (!_formKey.currentState!.validate()) return;
 
     setState(() { _loading = true; _error = null; });
 
     try {
-      final uid = FirebaseAuth.instance.currentUser?.uid ?? await LocalSession.getCurrentUserId() ?? widget.phoneNumber;
+      final currentUser = FirebaseAuth.instance.currentUser;
+      final uid = currentUser?.uid ?? await LocalSession.getCurrentUserId() ?? 'dev_user_${DateTime.now().millisecondsSinceEpoch}';
 
       final userData = {
         'uid': uid,
-        'phoneNumber': widget.phoneNumber,
+        'phoneNumber': widget.phoneNumber.isNotEmpty ? widget.phoneNumber : null,
         'name': _nameController.text.trim(),
         'email': _emailController.text.trim().isNotEmpty ? _emailController.text.trim() : null,
         'dateOfBirth': _selectedDate != null ? Timestamp.fromDate(_selectedDate!) : null,
         'profileComplete': true,
-        'gestureRecorded': false, // Will be set to true after calibration
-        'maxGestureValue': null, // Will be set after calibration
+        'gestureRecorded': false,
+        'maxGestureValue': null,
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       };
       userData.removeWhere((key, value) => value == null);
 
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .set(userData, SetOptions(merge: true));
+      if (currentUser != null) {
+        await FirebaseFirestore.instance
+            .collection('users')
+            .doc(uid)
+            .set(userData, SetOptions(merge: true));
+      } else {
+        debugPrint('ℹ️ [DEV] Saved profile locally for UID: $uid');
+      }
 
       // Cache current user ID in local session
       await LocalSession.setCurrentUserId(uid);
 
       widget.onComplete?.call();
-      Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const ShakeCalibrationScreen()), (_) => false);
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const ShakeCalibrationScreen()), (_) => false);
+      }
     } catch (e) {
-      setState(() { _error = "Failed to save user info: $e"; });
+      if (mounted) {
+        setState(() { _error = "Failed to save user info: $e"; });
+      }
     } finally {
-      setState(() { _loading = false; });
+      if (mounted) {
+        setState(() { _loading = false; });
+      }
     }
   }
 }

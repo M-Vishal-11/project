@@ -569,7 +569,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
                               controller: _phoneController,
                               decoration: InputDecoration(
                                 labelText: 'Phone Number',
-                                hintText: '+94 77 123 4567',
+                                hintText: '+91 73586 38986',
                                 prefixIcon: const Icon(Icons.phone),
                                 border: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(12),
@@ -582,7 +582,7 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
                                 }
                                 final digits = value.replaceAll(RegExp(r'[^\d]'), '');
                                 if (digits.length < 9) {
-                                  return 'Please enter a valid Sri Lankan phone number';
+                                  return 'Please enter a valid phone number';
                                 }
                                 return null;
                               },
@@ -701,16 +701,57 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
 
                           // Skip Verification button (debug builds only)
                           if (kDebugMode) ...[
-                            const SizedBox(height: 20),
+                            const SizedBox(height: 16),
                             SizedBox(
                               width: double.infinity,
-                              child: OutlinedButton(
+                              child: OutlinedButton.icon(
                                 onPressed: _loading ? null : () {
+                                  final input = _phoneController.text.trim();
+                                  if (input.isEmpty) {
+                                    setState(() {
+                                      _error = 'Please enter your phone number.';
+                                    });
+                                    return;
+                                  }
+
+                                  final digits = input.replaceAll(RegExp(r'[^\d]'), '');
+                                  String? validDigits;
+                                  if (digits.length == 10 &&
+                                      (digits.startsWith('6') ||
+                                          digits.startsWith('7') ||
+                                          digits.startsWith('8') ||
+                                          digits.startsWith('9'))) {
+                                    validDigits = digits;
+                                  } else if (digits.length == 12 && digits.startsWith('91')) {
+                                    final sub = digits.substring(2);
+                                    if (sub.startsWith('6') ||
+                                        sub.startsWith('7') ||
+                                        sub.startsWith('8') ||
+                                        sub.startsWith('9')) {
+                                      validDigits = sub;
+                                    }
+                                  }
+
+                                  if (validDigits == null) {
+                                    setState(() {
+                                      _error = 'Please enter a valid 10-digit Indian mobile number.';
+                                    });
+                                    return;
+                                  }
+
+                                  final formattedPhoneNumber =
+                                      '+91 ${validDigits.substring(0, 5)} ${validDigits.substring(5)}';
+
+                                  setState(() {
+                                    _error = null;
+                                  });
+
                                   Navigator.pushReplacement(
                                     context,
                                     MaterialPageRoute(
                                       builder: (context) => UserDetailsFormScreen(
-                                        phoneNumber: '',
+                                        phoneNumber: formattedPhoneNumber,
+                                        isVerified: false,
                                         onComplete: () {
                                           if (mounted) {
                                             widget.onAuthSuccess?.call();
@@ -720,20 +761,21 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
                                     ),
                                   );
                                 },
+                                icon: const Icon(Icons.skip_next, color: Color(0xFF7B3FA0), size: 20),
+                                label: const Text(
+                                  'Skip Verification',
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF7B3FA0),
+                                  ),
+                                ),
                                 style: OutlinedButton.styleFrom(
                                   side: const BorderSide(color: Color(0xFF7B3FA0)),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(12),
                                   ),
-                                  padding: const EdgeInsets.symmetric(vertical: 14),
-                                ),
-                                child: const Text(
-                                  'Skip Verification',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                    color: Color(0xFF7B3FA0),
-                                  ),
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
                                 ),
                               ),
                             ),

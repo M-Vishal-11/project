@@ -16,23 +16,6 @@ class LocationDatabase {
     return _database!;
   }
 
-  // Mutex to prevent concurrent database access
-  static Future<T> _withMutex<T>(Future<T> Function() operation) async {
-    // Simple mutex using a static boolean
-    while (_isProcessing) {
-      await Future.delayed(Duration(milliseconds: 10));
-    }
-
-    _isProcessing = true;
-
-    try {
-      final result = await operation();
-      return result;
-    } finally {
-      _isProcessing = false;
-    }
-  }
-
   static Future<Database> _initDatabase() async {
     final documentsDirectory = await getApplicationDocumentsDirectory();
     final path = join(documentsDirectory.path, 'location_data.db');
@@ -87,7 +70,7 @@ class LocationDatabase {
     );
   }
 
-  // Save location data with transaction
+  // Save location data (atomic single-row insert)
   static Future<int> saveLocationData({
     required String sessionId,
     required double latitude,
@@ -98,22 +81,17 @@ class LocationDatabase {
     double? heading,
     required int timestamp,
   }) async {
-    return await _withMutex(() async {
-      final db = await database;
-
-      return await db.transaction((txn) async {
-        return await txn.insert(_tableName, {
-          'session_id': sessionId,
-          'latitude': latitude,
-          'longitude': longitude,
-          'accuracy': accuracy,
-          'altitude': altitude,
-          'speed': speed,
-          'heading': heading,
-          'timestamp': timestamp,
-          'created_at': DateTime.now().millisecondsSinceEpoch,
-        });
-      });
+    final db = await database;
+    return await db.insert(_tableName, {
+      'session_id': sessionId,
+      'latitude': latitude,
+      'longitude': longitude,
+      'accuracy': accuracy,
+      'altitude': altitude,
+      'speed': speed,
+      'heading': heading,
+      'timestamp': timestamp,
+      'created_at': DateTime.now().millisecondsSinceEpoch,
     });
   }
 
@@ -153,7 +131,7 @@ class LocationDatabase {
     return result.isNotEmpty ? result.first : null;
   }
 
-  // Create a new location session with transaction
+  // Create a new location session (atomic single-row insert)
   static Future<int> createSession({
     required String sessionId,
     required String userId,
@@ -161,20 +139,15 @@ class LocationDatabase {
     required String phoneNumber,
     String? metadata,
   }) async {
-    return await _withMutex(() async {
-      final db = await database;
-
-      return await db.transaction((txn) async {
-        return await txn.insert(_sessionTableName, {
-          'session_id': sessionId,
-          'user_id': userId,
-          'client_id': clientId,
-          'phone_number': phoneNumber,
-          'is_active': 1,
-          'started_at': DateTime.now().millisecondsSinceEpoch,
-          'metadata': metadata,
-        });
-      });
+    final db = await database;
+    return await db.insert(_sessionTableName, {
+      'session_id': sessionId,
+      'user_id': userId,
+      'client_id': clientId,
+      'phone_number': phoneNumber,
+      'is_active': 1,
+      'started_at': DateTime.now().millisecondsSinceEpoch,
+      'metadata': metadata,
     });
   }
 

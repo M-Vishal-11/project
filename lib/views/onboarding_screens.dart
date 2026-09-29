@@ -154,7 +154,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         'image': 'assets/screen.png',
         'title': "Welcome to SafeStep",
         'subtitle':
-            "Your personal safety companion, designed for the unique needs of Sri Lankan women.",
+            "Your personal safety companion, designed for the unique needs of Indian women.",
       },
       {
         'image': 'assets/screen2.png',
