@@ -6,6 +6,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../services/location_service.dart';
 import 'local_session.dart';
 import 'location_database.dart';
+import 'safety_share_service.dart';
 
 class NativeBackgroundLocationService {
   static Timer? _locationTimer;
@@ -13,6 +14,23 @@ class NativeBackgroundLocationService {
   static String? _currentSessionId;
   static FlutterLocalNotificationsPlugin? _notifications;
   static StreamSubscription<Position>? _locationSubscription;
+  static bool _safetyTrackingOnly = false;
+
+  static Future<bool> startSafetyTracking() async {
+    if (_notifications == null) {
+      final initialized = await initialize();
+      if (!initialized) return false;
+    }
+    if (_isRunning) await stopTracking();
+    _safetyTrackingOnly = true;
+    final started = await startTracking(sessionId: '__active_safety__');
+    if (!started) _safetyTrackingOnly = false;
+    return started;
+  }
+
+  static Future<void> stopSafetyTracking() async {
+    if (_safetyTrackingOnly) await stopTracking();
+  }
 
   // Initialize the service
   static Future<bool> initialize() async {
@@ -31,8 +49,9 @@ class NativeBackgroundLocationService {
       
       await _notifications!.initialize(initSettings);
 
-      // Request permissions
-      await _requestPermissions();
+      // Request permissions before advertising background tracking as active.
+      final permissionsGranted = await _requestPermissions();
+      if (!permissionsGranted) return false;
 
       print('✅ [NATIVE BACKGROUND] Service initialized successfully');
       return true;
@@ -199,6 +218,15 @@ class NativeBackgroundLocationService {
       heading: position.heading,
     );
 
+    if (_safetyTrackingOnly) {
+      SafetyShareService.updateLocation(
+        latitude: locationData.latitude,
+        longitude: locationData.longitude,
+        accuracy: locationData.accuracy,
+      ).catchError((error) => print('[SAFETY SHARE] Location update failed: $error'));
+      return;
+    }
+
     // Send to backend
     LocationService.sendLocationUpdate(
       sessionId: _currentSessionId!,
@@ -270,6 +298,7 @@ class NativeBackgroundLocationService {
       _locationSubscription = null;
       _isRunning = false;
       _currentSessionId = null;
+      _safetyTrackingOnly = false;
 
       // Cancel notification
       await _notifications!.cancel(1001);
@@ -351,6 +380,14 @@ class NativeBackgroundLocationService {
 
       print('📍 [NATIVE BACKGROUND] Sending location update: ${locationData.latitude}, ${locationData.longitude}');
 
+      if (_safetyTrackingOnly) {
+        await SafetyShareService.updateLocation(
+          latitude: locationData.latitude,
+          longitude: locationData.longitude,
+          accuracy: locationData.accuracy,
+        );
+        return;
+      }
       // Send location update to backend
       final response = await LocationService.sendLocationUpdate(
         sessionId: _currentSessionId!,

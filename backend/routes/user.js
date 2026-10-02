@@ -1,7 +1,62 @@
 const express = require('express');
-const { getFirestore } = require('../config/firebase');
+const { getFirestore, admin } = require('../config/firebase');
 
 const router = express.Router();
+
+// Resolve a close contact only when that phone has a real Firebase Auth account.
+// The caller must be signed in; the response contains only the UID and display name.
+router.post('/resolve-contact', async (req, res) => {
+  try {
+    const authorization = req.headers.authorization || '';
+    const idToken = authorization.startsWith('Bearer ')
+      ? authorization.substring(7)
+      : null;
+    if (!idToken) return res.status(401).json({ success: false, message: 'Sign in first.' });
+
+    await admin.auth().verifyIdToken(idToken);
+    let digits = String(req.body.phoneNumber || '').replace(/\D/g, '');
+    if (digits.startsWith('00')) digits = digits.substring(2);
+    if (digits.length === 10 && digits.startsWith('0') && digits[1] === '7') {
+      digits = `94${digits.substring(1)}`;
+    } else if (digits.length === 9 && digits.startsWith('7')) {
+      digits = `94${digits}`;
+    } else if (digits.length === 10 && /^[6-9]/.test(digits)) {
+      digits = `91${digits}`;
+    }
+    if (!/^(91\d{10}|94\d{9})$/.test(digits)) {
+      return res.status(400).json({ success: false, message: 'Enter a valid supported mobile number.' });
+    }
+
+    const phoneNumber = `+${digits}`;
+    const profiles = await getFirestore()
+      .collection('users')
+      .where('phoneNumber', '==', phoneNumber)
+      .limit(1)
+      .get();
+    if (profiles.empty) {
+      return res.status(404).json({ success: false, message: 'This phone number is not registered in SafeStep yet.' });
+    }
+
+    const profile = profiles.docs[0];
+    const uid = profile.id;
+    if (profile.data().profileComplete !== true) {
+      return res.status(404).json({ success: false, message: 'This account has not completed SafeStep setup yet.' });
+    }
+    try {
+      await admin.auth().getUser(uid);
+    } catch (_) {
+      return res.status(404).json({ success: false, message: 'This SafeStep profile is not linked to an authenticated account.' });
+    }
+    return res.json({
+      success: true,
+      uid,
+      name: String(profile.data().name || 'SafeStep user'),
+    });
+  } catch (error) {
+    console.error('[CONTACT RESOLVE] Failed:', error.message);
+    return res.status(401).json({ success: false, message: 'Could not verify the signed-in account or contact.' });
+  }
+});
 
 // Validate phone number format
 const validatePhoneNumber = (phoneNumber) => {

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:safestep/views/map_view.dart';
 import 'package:safestep/services/local_session.dart';
@@ -252,10 +253,13 @@ class _SettingsTile extends StatelessWidget {
         throw Exception('No user ID found');
       }
 
-      // Delete user data from Firestore using phone number as document ID
+      final authUser = FirebaseAuth.instance.currentUser;
+      if (authUser == null || authUser.uid != userId) {
+        throw Exception('You are not signed in to the matching Firebase account. Sign in again, then retry.');
+      }
+      print('[DELETE ACCOUNT] Firebase Auth UID: ${authUser.uid}; project: ${FirebaseFirestore.instance.app.options.projectId}');
+      // Delete user data from Firestore using the authenticated UID as document ID
       print('🗑️ [DELETE ACCOUNT] Deleting user document: users/$userId');
-      await FirebaseFirestore.instance.collection('users').doc(userId).delete();
-      print('✅ [DELETE ACCOUNT] User document deleted successfully');
 
       // Delete user's subcollections
       final batch = FirebaseFirestore.instance.batch();
@@ -280,7 +284,13 @@ class _SettingsTile extends StatelessWidget {
       // Commit batch
       print('🗑️ [DELETE ACCOUNT] Committing batch deletion');
       await batch.commit();
-      print('✅ [DELETE ACCOUNT] Batch deletion completed successfully');
+
+      await FirebaseFirestore.instance.collection('active_safety').doc(userId).delete();
+
+      // Delete the user profile only after its subcollection cleanup succeeds.
+      await FirebaseFirestore.instance.collection('users').doc(userId).delete();
+      print('[DELETE ACCOUNT] User document deleted successfully');
+      print('[DELETE ACCOUNT] Firestore cleanup completed successfully');
 
       // Stop shake detection service
       print('🛑 [DELETE ACCOUNT] Stopping shake detection service');

@@ -58,6 +58,10 @@ class DangerZone {
 
 class MapViewState extends State<MapView> {
   GoogleMapController? _mapController;
+
+  void focusOnLocation(LatLng location) {
+    _mapController?.animateCamera(CameraUpdate.newLatLngZoom(location, 16));
+  }
   Set<Circle> _dangerZoneCircles = {};
   Set<Marker> _markers = {};
   bool _userMovedMap = false;

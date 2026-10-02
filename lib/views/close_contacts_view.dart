@@ -1,11 +1,13 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:safestep/services/local_session.dart';
+import 'package:safestep/services/otp_service.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 class CloseContactsView extends StatefulWidget {
   final VoidCallback? onBack;
-  const CloseContactsView({super.key, this.onBack});
+  final ValueChanged<String>? onViewSharedLocation;
+  const CloseContactsView({super.key, this.onBack, this.onViewSharedLocation});
   @override
   State<CloseContactsView> createState() => _CloseContactsViewState();
 }
@@ -50,6 +52,9 @@ class _CloseContactsViewState extends State<CloseContactsView> {
         setState(() { _error = 'You can only add up to 5 contacts.'; _loading = false; });
         return;
       }
+      final registeredContact = await OTPService.resolveRegisteredContact(
+        _phoneController.text.trim(),
+      );
       await FirebaseFirestore.instance
           .collection('users')
           .doc(_userId!)
@@ -57,13 +62,14 @@ class _CloseContactsViewState extends State<CloseContactsView> {
           .add({
         'name': _nameController.text.trim(),
         'phone': _phoneController.text.trim(),
+        'uid': registeredContact['uid'],
         'createdAt': FieldValue.serverTimestamp(),
       });
       _nameController.clear();
       _phoneController.clear();
       Navigator.of(context).pop();
     } catch (e) {
-      setState(() { _error = 'Failed to add contact.'; });
+      setState(() { _error = e.toString().replaceFirst('Exception: ', ''); });
     } finally {
       setState(() { _loading = false; });
     }
@@ -533,8 +539,20 @@ class _CloseContactsViewState extends State<CloseContactsView> {
                                 color: const Color(0xFF8F5FE8).withOpacity(0.2),
                               ),
                             ),
-                            child: Row(
-                              children: [
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(16),
+                              onTap: () {
+                                final uid = (data['uid'] ?? '').toString();
+                                if (uid.isEmpty) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('Remove and add this contact again to enable live location.')),
+                                  );
+                                  return;
+                                }
+                                widget.onViewSharedLocation?.call(uid);
+                              },
+                              child: Row(
+                                children: [
                                 Container(
                                   padding: const EdgeInsets.all(12),
                                   decoration: BoxDecoration(
@@ -578,7 +596,8 @@ class _CloseContactsViewState extends State<CloseContactsView> {
                                     color: Colors.red,
                                   ),
                                 ),
-                              ],
+                                ],
+                              ),
                             ),
                           );
                         }).toList(),

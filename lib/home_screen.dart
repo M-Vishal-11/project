@@ -14,6 +14,7 @@ import 'package:safestep/services/location_database.dart';
 import 'package:safestep/services/agent_data_service.dart';
 import 'package:safestep/services/location_service.dart';
 import 'package:safestep/services/native_background_location_service.dart';
+import 'package:safestep/services/safety_share_service.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:safestep/views/safe_chat_view.dart';
 import 'package:flutter/services.dart';
@@ -42,6 +43,7 @@ class _HomeScreenState extends State<HomeScreen> {
   StreamSubscription<QuerySnapshot>? _sharedLocationSubscription;
   final GlobalKey<MapViewState> _mapViewKey = GlobalKey<MapViewState>();
   Map<String, Map<String, dynamic>> _sharedLocations = {};
+  Map<String, Map<String, dynamic>> _activeSafetyAlerts = {};
 
 
   void _onNavTap(int index) {
@@ -104,81 +106,62 @@ class _HomeScreenState extends State<HomeScreen> {
       final localUserId = await LocalSession.getCurrentUserId();
       if (localUserId == null || localUserId.isEmpty) return;
 
-      // Listen to users who are sharing location with current user
       _sharedLocationSubscription = FirebaseFirestore.instance
-          .collection('users')
-          .where('shareLocationContacts', arrayContains: localUserId)
-          .where('sharingLocation', isEqualTo: true)
+          .collection('active_safety')
+          .where('recipientUids', arrayContains: localUserId)
           .snapshots()
           .listen((snapshot) {
-        print('🔍 [SHARED LOCATIONS] Query returned ${snapshot.docs.length} documents');
         final sharedLocations = <String, Map<String, dynamic>>{};
-        
+        final activeAlerts = <String, Map<String, dynamic>>{};
         for (final doc in snapshot.docs) {
           final data = doc.data();
-          print('🔍 [SHARED LOCATIONS] Found user: ${doc.id}, sharingLocation: ${data['sharingLocation']}, shareLocationContacts: ${data['shareLocationContacts']}');
-          final lastKnownLocation = data['lastKnownLocation'] as Map<String, dynamic>?;
-          
-          if (lastKnownLocation != null) {
-            final lat = lastKnownLocation['latitude'] as double?;
-            final lng = lastKnownLocation['longitude'] as double?;
-            
-            if (lat != null && lng != null) {
-              sharedLocations[doc.id] = {
-                'userId': doc.id,
-                'name': data['name'] ?? 'Unknown',
-                'profileImageUrl': data['profilePicUrl'] ?? data['profilePic'] ?? data['profileImageUrl'],
-                'latitude': lat,
-                'longitude': lng,
-                'timestamp': lastKnownLocation['timestamp'],
-                'accuracy': lastKnownLocation['accuracy'],
-              };
-              print('✅ [SHARED LOCATIONS] Added location for user: ${doc.id} at $lat, $lng, profileUrl: ${data['profilePicUrl'] ?? data['profilePic'] ?? data['profileImageUrl']}');
-            }
-          }
+          if (data['active'] != true) continue;
+          final latitude = (data['latitude'] as num?)?.toDouble();
+          final longitude = (data['longitude'] as num?)?.toDouble();
+          if (data['sosActive'] == true) activeAlerts[doc.id] = data;
+          if (latitude == null || longitude == null) continue;
+          sharedLocations[doc.id] = {
+            'userId': doc.id,
+            'name': (data['senderName'] ?? 'SafeStep user').toString(),
+            'latitude': latitude,
+            'longitude': longitude,
+            'timestamp': data['updatedAt'],
+            'accuracy': data['accuracy'],
+            'sosActive': data['sosActive'] == true,
+          };
         }
-        
+        if (!mounted) return;
         setState(() {
           _sharedLocations = sharedLocations;
+          _activeSafetyAlerts = activeAlerts;
         });
-        
-        print('📍 [SHARED LOCATIONS] Updated: ${sharedLocations.length} users sharing location');
+      }, onError: (Object error) {
+        debugPrint('[SAFETY SHARE] Listener failed: $error');
       });
     } catch (e) {
-      print('❌ [SHARED LOCATIONS] Error listening to shared locations: $e');
+      debugPrint('[SAFETY SHARE] Could not listen for live alerts: $e');
     }
   }
-
   Future<void> _focusOnSharedLocation(String fromUserId) async {
-    try {
-      // Get the shared location from the user's document
-      final userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(fromUserId)
-          .get();
-      
-      if (userDoc.exists) {
-        final data = userDoc.data()!;
-        final lastKnownLocation = data['lastKnownLocation'] as Map<String, dynamic>?;
-        
-        if (lastKnownLocation != null) {
-          final lat = lastKnownLocation['latitude'] as double?;
-          final lng = lastKnownLocation['longitude'] as double?;
-          
-          if (lat != null && lng != null) {
-            // Focus map on the shared location
-            if (_mapViewKey.currentState != null) {
-              // You can add a method to MapView to focus on a specific location
-              print('📍 [FOCUS] Focusing on shared location: $lat, $lng');
-            }
-          }
-        }
-      }
-    } catch (e) {
-      print('❌ [FOCUS] Error focusing on shared location: $e');
-    }
+    final location = _sharedLocations[fromUserId];
+    if (location == null) return;
+    final latitude = (location['latitude'] as num).toDouble();
+    final longitude = (location['longitude'] as num).toDouble();
+    _mapViewKey.currentState?.focusOnLocation(LatLng(latitude, longitude));
   }
 
+  void _viewContactLocation(String contactUid) {
+    if (!_sharedLocations.containsKey(contactUid)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This contact is not sharing a live location right now.')),
+      );
+      return;
+    }
+    setState(() => _currentIndex = null);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusOnSharedLocation(contactUid);
+    });
+  }
   void _listenToInboxNotifications() async {
     try {
       final localUserId = await LocalSession.getCurrentUserId();
@@ -978,6 +961,27 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
+                  if (_activeSafetyAlerts.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                      child: Column(
+                        children: _activeSafetyAlerts.entries.map((entry) {
+                          final alertName = (entry.value['senderName'] ?? 'SafeStep user').toString();
+                          return Card(
+                            color: const Color(0xFFFFE8E8),
+                            child: ListTile(
+                              leading: const Icon(Icons.sos, color: Colors.red, size: 32),
+                              title: Text('$alertName is in danger', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
+                              subtitle: Text(entry.value['locationTracking'] == true
+                                  ? 'Live location is being shared with you'
+                                  : 'SOS alert received; showing their latest location'),
+                              trailing: const Icon(Icons.map, color: Colors.red),
+                              onTap: () => _focusOnSharedLocation(entry.key),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
                   // Square map container
                   Expanded(
                     child: Padding(
@@ -1082,6 +1086,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     onAddDangerZone: _addDangerZone,
                     currentPosition: _currentPosition,
                     onNavigateToMap: () => setState(() => _currentIndex = null),
+                    onViewContactLocation: _viewContactLocation,
                   )
                 : SettingsView(onProfilePicChanged: _onProfilePicChanged),
         bottomNavigationBar: CustomBottomNavigationBar(
@@ -1118,34 +1123,8 @@ class _ActiveShareLocationPanelState extends State<ActiveShareLocationPanel> {
         return;
       }
 
-      // Get active session from SQLite
-      final activeSession = await LocationDatabase.getActiveSession(localUserId);
-      if (activeSession != null) {
-        final String sessionId = activeSession['session_id'];
-        // End session in SQLite
-        await LocationDatabase.endSession(sessionId);
-        print('✅ [STOP SHARING] SQLite session ended: $sessionId');
-
-        // Stop on backend
-        try {
-          final stopResp = await LocationService.stopLocationSharing(sessionId: sessionId);
-          if (!stopResp.success) {
-            print('⚠️ [STOP SHARING] Backend stop failed: ${stopResp.code} ${stopResp.message}');
-          } else {
-            print('✅ [STOP SHARING] Backend session stopped');
-          }
-        } catch (e) {
-          print('❌ [STOP SHARING] Backend stop error: $e');
-        }
-
-        // Stop native background tracking
-        try {
-          await NativeBackgroundLocationService.stopTracking();
-          print('✅ [STOP SHARING] Native background tracking stopped');
-        } catch (e) {
-          print('❌ [STOP SHARING] Failed to stop native tracking: $e');
-        }
-      }
+      await SafetyShareService.stopLiveLocation();
+      await NativeBackgroundLocationService.stopSafetyTracking();
 
       // Update Firebase with sharing status
       await FirebaseFirestore.instance.collection('users').doc(localUserId).set({
@@ -1155,7 +1134,7 @@ class _ActiveShareLocationPanelState extends State<ActiveShareLocationPanel> {
         'shareLocationUpdatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
-      print('✅ [STOP SHARING] Firebase updated with stop status');
+      print('✅ [STOP SHARING] Location sharing stopped');
       
       // Force UI update to show the share location card
       if (mounted) {
@@ -1604,6 +1583,40 @@ class _ShareLocationSheetContentState extends State<_ShareLocationSheetContent> 
       }
       
       print('📍 [SHARE LOCATION] Current location: ${locationData.latitude}, ${locationData.longitude}');
+
+      // Live sharing uses Firestore directly. The previous backend session used
+      // an obsolete hard-coded budd.systems address and prevented sharing.
+      final sharingUserId = await LocalSession.getCurrentUserId();
+      if (sharingUserId == null || sharingUserId.isEmpty) {
+        throw Exception('Sign in before sharing location.');
+      }
+      await SafetyShareService.startLiveLocation(
+        latitude: locationData.latitude,
+        longitude: locationData.longitude,
+        contactIds: _selectedContactIds,
+      );
+      final trackingStarted =
+          await NativeBackgroundLocationService.startSafetyTracking();
+      await SafetyShareService.setTrackingEnabled(trackingStarted);
+
+      await FirebaseFirestore.instance.collection('users').doc(sharingUserId).set({
+        'sharingLocation': true,
+        'shareLocationContacts': _selectedContactIds.toList(),
+        'shareLocationDuration': _selectedDuration,
+        'shareLocationUpdatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Location sharing started with ${_selectedContactIds.length} contact(s)'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        Navigator.pop(context);
+        setState(() => _sharingLocation = false);
+      }
+      return;
       
       // Step 2: Generate client ID
       final clientId = LocationService.generateClientId();

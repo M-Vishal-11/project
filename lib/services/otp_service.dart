@@ -2,11 +2,48 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class OTPService {
   static String get _baseUrl => dotenv.env['BACKEND_URL'] ?? 'http://budd.systems:9442';
   static const Duration _timeout = Duration(seconds: 10);
   static const Duration _devTokenTimeout = Duration(seconds: 5);
+
+  static Future<Map<String, String>> resolveRegisteredContact(String phoneNumber) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) throw Exception('Sign in before adding a close contact.');
+    final endpoint = Uri.parse('$_baseUrl/api/user/resolve-contact');
+    final hostParts = endpoint.host.split('.');
+    final secondOctet = hostParts.length == 4 && hostParts[0] == '172'
+        ? int.tryParse(hostParts[1]) ?? 0
+        : 0;
+    final isLocalDevHost = endpoint.host == 'localhost' ||
+        endpoint.host == '127.0.0.1' ||
+        endpoint.host.startsWith('192.168.') ||
+        endpoint.host.startsWith('10.') ||
+        (secondOctet >= 16 && secondOctet <= 31);
+    if (endpoint.scheme != 'https' && !(kDebugMode && isLocalDevHost)) {
+      throw Exception('Contact verification requires an HTTPS backend. Set BACKEND_URL to your secure server URL.');
+    }
+    final token = await user.getIdToken();
+    if (token == null) throw Exception('Could not verify your Firebase sign-in. Sign in again.');
+    final response = await http.post(
+      endpoint,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({'phoneNumber': _formatPhoneNumber(phoneNumber)}),
+    ).timeout(_timeout);
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    if (response.statusCode != 200 || data['success'] != true) {
+      throw Exception(data['message'] ?? 'Could not verify this SafeStep contact.');
+    }
+    return {
+      'uid': data['uid'].toString(),
+      'name': data['name'].toString(),
+    };
+  }
 
   // Format phone number for backend API
   // The backend expects a phone number string, strips non-digits, and prepends +

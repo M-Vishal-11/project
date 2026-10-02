@@ -2,9 +2,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:awesome_ripple_animation/awesome_ripple_animation.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
-import 'package:safestep/services/local_session.dart';
+import 'package:safestep/services/safety_share_service.dart';
+import 'package:safestep/services/native_background_location_service.dart';
 
 class TenSecondPanicScreen extends StatefulWidget {
   const TenSecondPanicScreen({super.key});
@@ -48,50 +47,28 @@ class _TenSecondPanicScreenState extends State<TenSecondPanicScreen> {
 
       print('🚨 [EMERGENCY] Starting emergency alert process');
 
-      // Get current user info
-      final userId = await LocalSession.getCurrentUserId();
-      if (userId == null) {
-        throw Exception('User not authenticated');
-      }
-
       // Get current location
       final position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
       );
 
+      await SafetyShareService.startSos(
+        latitude: position.latitude,
+        longitude: position.longitude,
+      );
+      try {
+        final trackingStarted = await NativeBackgroundLocationService.startSafetyTracking();
+        await SafetyShareService.setTrackingEnabled(trackingStarted);
+      } catch (trackingError) {
+        debugPrint('[SAFETY SHARE] Background tracking did not start: $trackingError');
+      }
+
       print('📍 [EMERGENCY] Current location: ${position.latitude}, ${position.longitude}');
 
-      // Get user name from Firebase (you might need to adjust this based on your user structure)
-      // For now, we'll use a placeholder
-      const userName = 'SafeStep User';
-
-      // Send emergency alert to backend
-      final response = await http.post(
-        Uri.parse('http://budd.systems:9442/api/emergency/alert'),
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: json.encode({
-          'userId': userId,
-          'userName': userName,
-          'latitude': position.latitude,
-          'longitude': position.longitude,
-          'timestamp': DateTime.now().toIso8601String(),
-        }),
-      ).timeout(const Duration(seconds: 30));
-
-      if (response.statusCode == 200) {
-        final responseData = json.decode(response.body);
-        print('✅ [EMERGENCY] Alert sent successfully: ${responseData['data']['successCount']} contacts alerted');
-        
-        setState(() {
-          _alertSent = true;
-          _isAlerting = false;
-        });
-      } else {
-        final errorData = json.decode(response.body);
-        throw Exception(errorData['message'] ?? 'Failed to send emergency alert');
-      }
+      setState(() {
+        _alertSent = true;
+        _isAlerting = false;
+      });
     } catch (e) {
       print('❌ [EMERGENCY] Error sending alert: $e');
       setState(() {
@@ -147,7 +124,7 @@ class _TenSecondPanicScreenState extends State<TenSecondPanicScreen> {
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 20),
                 child: Text(
-                  'Within 10 seconds, your close contacts will be alerted of your whereabouts.',
+                  'After the countdown, your SafeStep close contacts will see an SOS alert and your live location.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 16,
@@ -192,7 +169,7 @@ class _TenSecondPanicScreenState extends State<TenSecondPanicScreen> {
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 20),
                 child: Text(
-                  'Sending emergency alerts to your close contacts with your location...',
+                  'Sharing your SOS alert and live location with your SafeStep contacts...',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 16,
@@ -228,7 +205,7 @@ class _TenSecondPanicScreenState extends State<TenSecondPanicScreen> {
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 20),
                 child: Text(
-                  'Your close contacts have been notified with your location. Help is on the way!',
+                  'Your SafeStep contacts can see that you are in danger and follow your live location.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 16,
@@ -292,9 +269,14 @@ class _TenSecondPanicScreenState extends State<TenSecondPanicScreen> {
             Padding(
               padding: const EdgeInsets.only(bottom: 50),
               child: ElevatedButton(
-                onPressed: () {
+                onPressed: () async {
                   _timer.cancel();
-                  Navigator.of(context).pop();
+                  try {
+                    await SafetyShareService.stopSos();
+                    await NativeBackgroundLocationService.stopSafetyTracking();
+                  } finally {
+                    if (mounted) Navigator.of(context).pop();
+                  }
                 },
                 style: ElevatedButton.styleFrom(
                   foregroundColor: Colors.white,

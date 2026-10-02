@@ -15,7 +15,8 @@ class MenuView extends StatefulWidget {
   final void Function(LatLng, double)? onAddDangerZone;
   final LatLng? currentPosition;
   final VoidCallback? onNavigateToMap;
-  const MenuView({super.key, this.onFeatureOpen, this.onAddDangerZone, this.currentPosition, this.onNavigateToMap});
+  final ValueChanged<String>? onViewContactLocation;
+  const MenuView({super.key, this.onFeatureOpen, this.onAddDangerZone, this.currentPosition, this.onNavigateToMap, this.onViewContactLocation});
 
   @override
   State<MenuView> createState() => _MenuViewState();
@@ -179,7 +180,10 @@ class _MenuViewState extends State<MenuView> with TickerProviderStateMixin {
                         label: 'Close Contacts',
                         subtitle: 'Manage and share your location.',
                         iconColor: const Color(0xFF43e97b), // Contacts Gradient Start
-                        onTap: () => _openFeature(CloseContactsView(onBack: _closeFeature)),
+                        onTap: () => _openFeature(CloseContactsView(
+                          onBack: _closeFeature,
+                          onViewSharedLocation: widget.onViewContactLocation,
+                        )),
                       ),
                     ]),
                   ),

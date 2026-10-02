@@ -240,8 +240,16 @@ class _UserDetailsFormScreenState extends State<UserDetailsFormScreen> {
     setState(() { _loading = true; _error = null; });
 
     try {
+      // Reload to pick up any token refresh that happened in the background
+      await FirebaseAuth.instance.currentUser?.reload();
       final currentUser = FirebaseAuth.instance.currentUser;
-      final uid = currentUser?.uid ?? await LocalSession.getCurrentUserId() ?? 'dev_user_${DateTime.now().millisecondsSinceEpoch}';
+      if (currentUser == null) {
+        throw Exception('Your Firebase sign-in expired. Sign in again before completing your profile.');
+      }
+      // Force-refresh the ID token so the Firestore write doesn't fail
+      // with a stale / expired token.
+      await currentUser.getIdToken(true);
+      final uid = currentUser.uid;
 
       final userData = {
         'uid': uid,
@@ -257,15 +265,10 @@ class _UserDetailsFormScreenState extends State<UserDetailsFormScreen> {
       };
       userData.removeWhere((key, value) => value == null);
 
-      if (currentUser != null) {
-        await FirebaseFirestore.instance
-            .collection('users')
-            .doc(uid)
-            .set(userData, SetOptions(merge: true));
-      } else {
-        debugPrint('ℹ️ [DEV] Saved profile locally for UID: $uid');
-      }
-
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .set(userData, SetOptions(merge: true));
       // Cache current user ID in local session
       await LocalSession.setCurrentUserId(uid);
 

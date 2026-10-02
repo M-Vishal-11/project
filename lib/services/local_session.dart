@@ -14,8 +14,8 @@ class LocalSession {
     if (firebaseUid != null && firebaseUid.isNotEmpty) {
       return firebaseUid;
     }
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_keyCurrentUserId);
+    // A cached ID is not proof of authentication and cannot authorize Firestore.
+    return null;
   }
 
   static Future<void> clear() async {
